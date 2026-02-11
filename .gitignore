@@ -1,0 +1,15 @@
+# Fityk generated files
+*.xy
+*.asv
+*.fit
+parameters_report.txt
+results.csv
+*.log
+BELorentzian.lua
+
+# System files
+Thumbs.db
+.DS_Store
+
+# User specific config (optional, if you want to keep base config clean)
+# FitykTools.lua 
