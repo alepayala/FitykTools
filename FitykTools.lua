@@ -183,7 +183,14 @@ function BatchProcessor.batchFit()
              -- Copy model definition and parameters from previous dataset
             F:execute(string.format("@%d.F = copy(@%d.F)", n, n - 1))
         end
-        F:execute(string.format("fit @%d", n))
+        
+        -- Check if model exists (has components) before fitting to avoid "No parametrized functions" error
+        local components = F:get_components(n)
+        if components and #components > 0 then
+            F:execute(string.format("fit @%d", n))
+        else
+            BatchProcessor.log("WARN", "Dataset " .. n .. " has no functions. Skipping fit.")
+        end
     end, UserConfig.n_i, UserConfig.n_f)
 end
 
