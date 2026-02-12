@@ -216,7 +216,16 @@ function BatchProcessor.saveAllData()
         local title = F:get_info("title", n)
         -- Sanitize title for filename
         local filename = title:gsub("[^%w%-_]", "_") .. ".xy"
-        F:execute(string.format("@%d: print all: x, y, F(x) > '%s'", n, filename))
+        
+        -- Write header
+        local f_header = io.open(filename, "w")
+        if f_header then
+            f_header:write("x\ty\tF(x)\n")
+            f_header:close()
+        end
+
+        -- Append data (using >> to append to the file we just created)
+        F:execute(string.format("@%d: print all: x, y, F(x) >> '%s'", n, filename))
     end)
 end
 
