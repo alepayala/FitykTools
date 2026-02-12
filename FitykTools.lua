@@ -43,11 +43,12 @@ local UserConfig = {
     output_delimiter = "TAB", 
 
     -- Data range for processing (X-axis limits).
-    lowerL = -200,
-    upperL = -100,
+    -- If 'lowerL > upperL' (e.g. 1, 0), the limit is DISABLED and all data is used.
+    lowerL = 1,
+    upperL = 0,
 
     -- Spectrum range for fitting (Dataset indices).
-    n_i = 12,      -- First spectrum index to fit.
+    n_i = 0,       -- First spectrum index to fit.
     n_f = 0,       -- Last spectrum index to fit. (0 means fit to the end).
 
     -- Report layout: `true` groups by parameter type (c1, c2 ... h1, h2 ...); 
