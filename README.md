@@ -1,71 +1,76 @@
-# Fityk Batch Processing Script 🚀
+# FitykTools: Robust Batch Processing for Fityk 🚀
 
-A robust, self-contained Lua script for automating spectral data analysis in [Fityk](https://fityk.ni/). It handles batch fitting, parameter extraction, reporting, and data management.
+A powerful, self-contained Lua script for automating spectral data analysis in [Fityk](https://fityk.ni/). It handles batch fitting across multiple datasets, extracts parameters, generates detailed reports, and exports data for external plotting.
 
-## Features
+## 🎥 [Watch the Demo Video](FitykTools.mp4)
 
-- **Batch Fitting**: Sequentially fits multiple datasets. intelligently using parameters from the previous dataset as initial guesses.
-- **Advanced Reporting**: Generates clean, tabulated reports of peak parameters (center, height, HWHM, Area, etc.) and their errors.
-- **Flexible Output**: Supports both **Tab-Separated** (for text editors) and **CSV** (for Excel/Pandas) formats.
-- **External Configuration**: Supports a separate `fityk_config.lua` file for easy setting management without modifying the code.
-- **Data Manipulation**: Built-in tools for normalization and baseline subtraction.
-- **Robustness**: Automatically handles missing parameters (e.g., if a dataset has a different peak type) without crashing.
+See the script in action: **[FitykTools.mp4](FitykTools.mp4)** (Download to view)
+
+---
+
+## Key Features
+
+*   **Batch Fitting**: Sequentially fits multiple datasets, intelligently copying parameters from the previous dataset (`n`) to the next (`n+1`) as initial guesses for stable convergence.
+*   **Detailed Exports**: Saves `.xy` files containing:
+    *   `x`
+    *   `y` (Original Data)
+    *   `F(x)` (Total Fit)
+    *   **Individual Components**: Columns for every single peak function (e.g., `%Gaussian1(x)`, `%Lorentzian2(x)`).
+*   **Robust & Flexible**: 
+    *   Automatically handles missing parameters (e.g., fitting a dataset with no peaks doesn't crash the script).
+    *   Supports different function types (Gaussian, Lorentzian, Sigmoid, etc.) with automatic handling of varying parameter names.
+*   **External Configuration**: Keep your code clean! Use a separate `fityk_config.lua` file in your data folder to control settings without modifying the main script.
+*   **Advanced Reporting**: Generates Tab-Separated or CSV reports with parameter values and errors.
 
 ## Installation
 
-1. Download `FitykTools.lua` and place it in a known folder (e.g., `C:\Scripts\FitykTools.lua`).
-2. (Optional) Download `fityk_config.lua` and place it in the folder where your data is located.
+1.  Download `FitykTools.lua` and place it in a convenient folder (e.g., `C:\Scripts\`).
+2.  (Optional) Download `fityk_config.lua` and place it in the folder where your data files are located.
 
 ## Usage
 
 ### 1. Load Data
-Open Fityk and load your series of data files.
+Open Fityk and load your series of data files (e.g., multiple `.dat` or `.xy` files).
 
-### 2. Configure (Two Options)
+### 2. Configure
+You have two options:
 
-#### Option A: External Configuration (Recommended)
-Copy the `fityk_config.lua` file to the same folder as your data. Edit this file to change settings for that specific analysis.
-
+**Option A (Recommended): External Config**
+Copy `fityk_config.lua` to your data directory. Edit it to set your preferences:
 ```lua
 return {
     mode = "full_process_and_save",
-    report_output_file = "results.csv",
-    output_delimiter = "CSV",
+    lowerL = 1, upperL = 0, -- Set inverted to use full range
     -- ... other settings
 }
 ```
 
-#### Option B: Edit the Script
-If `fityk_config.lua` is not found, the script uses the defaults defined inside `FitykTools.lua`. You can edit the `UserConfig` section at the top of the script to change these defaults.
+**Option B: Edit the Script**
+If no config file is found, the script uses default settings defined at the top of `FitykTools.lua`.
 
 ### 3. Run
-In the Fityk command line console (usually at the bottom of the window), type:
-
-```bash
-exec 'C:\Scripts\FitykTools.lua'
+In the Fityk console (bottom of the window), type:
+```lua
+exec 'C:\path\to\FitykTools.lua'
 ```
 
-(Replace the path with the actual location of the script).
+## Output Formats
 
-## Workflow Modes
+**Report File (`results.txt` or `.csv`)**:
+Contains a row for each dataset with columns for Chi-Square, DOF, and all defined parameters (Center, Height, FWHM, Area, etc.).
 
-The `mode` variable controls what the script does:
-
-| Mode | Description |
-|------|-------------|
-| `full_process` | Fits data, replots, and prints report to screen. |
-| `full_process_and_save` | Fits, reports, and saves both the report file and `.xy` data files. |
-| `fit_only` | Performs batch fitting and updating plots only. |
-| `report_only` | Generates the parameter report for currently fitted data. |
-| `save_table` | Generates and saves the parameter report only. |
-| `subtract_baseline` | Subtracts the background function (e.g., `%bgN`) from the data. |
-| `normalize_and_replot` | Normalizes Y-values to [0,1] range. |
+**XY Data Files**:
+Saved as `Filename.xy`.
+Format:
+```text
+x	y	F(x)	%Gaussian1(x)	%Lorentzian2(x) ...
+10.0	25.1	24.9	12.0	12.9
+...
+```
 
 ## License
-
 MIT License. See [LICENSE](LICENSE) for details.
 
 ## Author
-
-**Alejandro Pedro Ayala**  
+**Alejandro Pedro Ayala**
 Federal University of Ceará
