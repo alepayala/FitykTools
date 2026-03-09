@@ -41,8 +41,8 @@ return {
     
     -- List of parameter names to extract from each peak. 
     -- 'center' MUST be first for robust sorting.
-    headerStr = {"center", "height", "hwhm"}, 
-    
+    headerStr = {"center", "height", "hwhm", "width", "shape", "shape_m", "skewness", "q", "rel_int", "delta_x", "hwhm_L"}, 
+
     -- List of error names for the report. 
     -- Set to `true` (or "auto") to automatically generate error headers (e.g. "eCenter").
     -- Set to a list of strings (e.g. {"eCenter", "eHeight"}) to customize names.
@@ -52,4 +52,12 @@ return {
     -- Optional regex to extract part of a filename for the column "File". "" uses the full name.
     -- Example: "Br5_(%d+)K" extracts '014' from 'Br5_014K-S.txt'.
     fileinfo_mask = "Br5_(%d+)K", 
+
+    -- List of custom fitting functions to define in Fityk.
+    -- Each string in the list should be a valid Fityk command.
+    custom_functions = {
+        "define PearsonIV(height, center, width=1, shape_m=1, skewness=0) = height * (1 + ((x - center)/width)^2)^(-shape_m) * exp(-skewness * atan((x - center)/width))",
+        "define BWF(height, center, hwhm=1, q=100) = height * (1 + (x - center) / (q * hwhm))^2 / (1 + ((x - center) / hwhm)^2)",
+        "define PVL(height, center, hwhm, shape, rel_int, delta_x, hwhm_L) = PseudoVoigt(height, center, hwhm, shape) + Lorentzian(height * rel_int, center + delta_x, hwhm_L)",
+    },
 }

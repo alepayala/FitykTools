@@ -71,6 +71,11 @@ local UserConfig = {
     -- Optional regex to extract part of a filename for the column "File". "" uses the full name.
     -- Example: "Br5_(%d+)K" extracts '014' from 'Br5_014K-S.txt'.
     fileinfo_mask = "Br5_(%d+)K", 
+
+    -- List of custom fitting functions to define in Fityk.
+    -- Each string in the list should be a valid Fityk command.
+    -- Example: {"define PearsonIV(height, center, width, shape_m, skewness, x) = height * (1 + ((x - center)/width)^2)^(-shape_m) * exp(-skewness * atan((x - center)/width))"}
+    custom_functions = {},
 }
 
 ------------------------------------------------------------
@@ -351,7 +356,7 @@ function BatchProcessor.generateReport()
         if UserConfig.sortByType then
             for j = 1, #UserConfig.headerStr do
                 for k = 1, max_peaks do
-                    local val_index = 1
+                    local val_index = j
                     if UserConfig.errorStr then val_index = 2 * (j - 1) + 1 end
                     
                     if params[k] then
@@ -424,6 +429,27 @@ function BatchProcessor.run()
     
     print("🚀 Starting Fityk Batch Processing Script...")
     print(string.format("Info: Running in mode '%s'", UserConfig.mode))
+
+    if UserConfig.custom_functions and #UserConfig.custom_functions > 0 then
+        BatchProcessor.log("INFO", "Checking custom functions...")
+        for _, func_cmd in ipairs(UserConfig.custom_functions) do
+            local func_name = string.match(func_cmd, "define%s+([%w_]+)")
+            if func_name then
+                -- Try to define the function gracefully.
+                -- We use pcall so that if it's already defined (and in use by a model), 
+                -- the script continues to run successfully without aborting.
+                local success, err = pcall(function() F:execute(func_cmd) end)
+                if success then
+                    BatchProcessor.log("INFO", "Defined custom function: " .. func_name)
+                else
+                    BatchProcessor.log("INFO", "Function '" .. func_name .. "' is already defined.")
+                end
+            else
+                -- Execute generic Fityk command safely
+                pcall(function() F:execute(func_cmd) end)
+            end
+        end
+    end
 
     if UserConfig.mode == "full_process" then
         BatchProcessor.setLimits()
