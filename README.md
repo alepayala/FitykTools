@@ -21,6 +21,7 @@ See the script in action: **[FitykTools.mp4](FitykTools.mp4)** (Download to view
     *   Supports different function types (Gaussian, Lorentzian, Sigmoid, etc.) with automatic handling of varying parameter names.
 *   **External Configuration**: Keep your code clean! Use a separate `fityk_config.lua` file in your data folder to control settings without modifying the main script.
 *   **Advanced Reporting**: Generates Tab-Separated or CSV reports with parameter values and errors.
+*   **User-Defined Functions**: Easily define and use custom fitting functions (e.g., `PVL`, `PearsonIV`) directly in your configuration file or the main script, expanding Fityk's built-in capabilities.
 
 ## Installation
 
