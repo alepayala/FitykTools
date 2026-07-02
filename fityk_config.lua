@@ -15,18 +15,22 @@ return {
     -- "save_table":              Generate & Save Report (no fitting)
     -- "normalize_and_replot":    Normalize Y to [0,1] -> Plot
     -- "subtract_baseline":       Subtract background functions -> Plot
-    mode = "save_table",
+    mode = "full_process",
     
     -- Report output file. "" prints to screen; "filename.txt" saves to file AND prints to screen.
-    report_output_file = "", 
+    report_output_file = "parameters_report.txt", 
     
     -- Output format: "TAB" (default, good for reading) or "CSV" (good for Excel/Pandas).
     output_delimiter = "TAB", 
+
+    -- If true, automatically launch the external plotter after saving the
+    -- parameter report. The plotter is launched non-blocking so Fityk continues.
+    auto_plot = true,
     
     -- Data range for processing (X-axis limits).
     -- If 'lowerL > upperL' (e.g. 1, 0), the limit is DISABLED and all data is used.
-    lowerL = 1,
-    upperL = 0,
+    lowerL = 280,
+    upperL = 380,
     
     -- Spectrum range for fitting (Dataset indices).
     n_i = 0,      -- First spectrum index to fit.
@@ -35,13 +39,17 @@ return {
     -- Report layout: `true` groups by parameter type (c1, c2 ... h1, h2 ...); 
     -- `false` groups by peak (c1, h1 ... c2, h2 ...).
     sortByType = true,
+
+    -- Sort peaks by the first parameter (typically 'center'). Set to `false` to disable sorting.
+    sortByFirstParam = true,
+
     
     -- List of background function names to exclude from parameter reports.
     backgroundFuncNames = {"Linear", "Quadratic"},
     
     -- List of parameter names to extract from each peak. 
     -- 'center' MUST be first for robust sorting.
-    headerStr = {"center", "height", "hwhm", "width", "shape", "shape_m", "skewness", "q", "rel_int", "delta_x", "hwhm_L"}, 
+    headerStr = {"center", "height", "hwhm"},--, "width", "shape", "shape_m", "skewness", "q", "rel_int", "delta_x", "hwhm_L"}, 
 
     -- List of error names for the report. 
     -- Set to `true` (or "auto") to automatically generate error headers (e.g. "eCenter").
@@ -51,7 +59,7 @@ return {
     
     -- Optional regex to extract part of a filename for the column "File". "" uses the full name.
     -- Example: "Br5_(%d+)K" extracts '014' from 'Br5_014K-S.txt'.
-    fileinfo_mask = "Br5_(%d+)K", 
+    fileinfo_mask = "NHSnCl_(%d+)K", 
 
     -- List of custom fitting functions to define in Fityk.
     -- Each string in the list should be a valid Fityk command.

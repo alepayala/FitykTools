@@ -69,6 +69,16 @@ x	y	F(x)	%Gaussian1(x)	%Lorentzian2(x) ...
 ...
 ```
 
+## Plotting Tools
+
+Included in the repository is a Python plotting tool, `plot_fityk_table.py`, which visualizes the generated parameter tables as a grid of subplots (one for each parameter and peak pair).
+
+**Usage:**
+```bash
+python plot_fityk_table.py results.txt
+```
+*It automatically detects the delimiter, extracts the x-axis, and generates `results_matrix.png`.*
+
 ## License
 MIT License. See [LICENSE](LICENSE) for details.
 

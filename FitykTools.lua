@@ -34,13 +34,18 @@ local UserConfig = {
     -- "save_table":              Generate & Save Report (no fitting)
     -- "normalize_and_replot":    Normalize Y to [0,1] -> Plot
     -- "subtract_baseline":       Subtract background functions -> Plot
-    mode = "save_table",
+    mode = "full_process",
     
     -- Report output file. "" prints to screen; "filename.txt" saves to file AND prints to screen.
     report_output_file = "", 
 
     -- Output format: "TAB" (default, good for reading) or "CSV" (good for Excel/Pandas).
     output_delimiter = "TAB", 
+
+    -- If true, automatically launch the external plotter after saving the
+    -- parameter report. The plotter is launched non-blocking so Fityk continues
+    -- running. Default: false
+    auto_plot = false,
 
     -- Data range for processing (X-axis limits).
     -- If 'lowerL > upperL' (e.g. 1, 0), the limit is DISABLED and all data is used.
@@ -54,6 +59,9 @@ local UserConfig = {
     -- Report layout: `true` groups by parameter type (c1, c2 ... h1, h2 ...); 
     -- `false` groups by peak (c1, h1 ... c2, h2 ...).
     sortByType = true,
+
+    -- Sort peaks by the first parameter (typically 'center'). Set to `false` to disable sorting.
+    sortByFirstParam = true,
 
     -- List of background function names to exclude from parameter reports.
     backgroundFuncNames = {"Linear", "Quadratic"},
@@ -98,6 +106,14 @@ function BatchProcessor.validateConfig()
         error("Config Error: 'errorStr' length as a list must match 'headerStr'. Use `true` for auto-naming.")
     end
 end
+
+-- Helper: Ensure a report file is always available for full-process workflows
+function BatchProcessor.ensureReportOutputFile()
+    if not UserConfig.report_output_file or UserConfig.report_output_file == "" then
+        UserConfig.report_output_file = "parameters_report.txt"
+    end
+end
+
 -- Helper: Load External Config
 function BatchProcessor.loadExternalConfig()
     local config_file = "fityk_config.lua"
@@ -287,9 +303,11 @@ function BatchProcessor.generateReport()
         end
 
         -- 2. Sorting (by first parameter, typically 'center')
-        table.sort(current_dataset_params, function(a, b)
-            return a[1] < b[1]
-        end)
+        if UserConfig.sortByFirstParam then
+            table.sort(current_dataset_params, function(a, b)
+                return a[1] < b[1]
+            end)
+        end
 
         all_datasets_params[n] = current_dataset_params
         if #current_dataset_params > max_peaks then
@@ -422,6 +440,73 @@ function BatchProcessor.generateReport()
 end
 
 
+-- Helper: Launch external plotter (non-blocking)
+function BatchProcessor.launchPlotter(report_file)
+    -- Determine working directory: prefer the dataset folder (if available),
+    -- otherwise use current working dir.
+    local function get_workdir()
+        -- Try to get filename for dataset 0
+        local ok, fname = pcall(function() return F:get_info("filename", 0) end)
+        if ok and fname and #fname > 0 then
+            local d = fname:match('^(.*)[/\\]')
+            if d and #d > 0 then return d end
+        end
+        -- Fallback to current process dir (cmd/PowerShell 'cd')
+        local p = io.popen("cd")
+        if p then
+            local cur = p:read("*l")
+            p:close()
+            if cur and #cur > 0 then return cur end
+        end
+        return "."
+    end
+
+    -- Determine script directory (where this Lua file is located)
+    local function get_script_dir()
+        local info = debug.getinfo(1, 'S')
+        if info and info.source then
+            local s = tostring(info.source)
+            local path = s:match('@?(.*)')
+            if path and path:match('[/\\]') then
+                return path:match('^(.*)[/\\]')
+            end
+        end
+        if arg and arg[0] then
+            local p = tostring(arg[0])
+            if p:match('[/\\]') then return p:match('^(.*)[/\\]') end
+        end
+        return "."
+    end
+
+    local workdir = get_workdir()
+    local script_dir = get_script_dir()
+
+    -- Prefer a bundled EXE named 'plot_fityk_table.exe' next to this script,
+    -- otherwise look for 'plot_fityk_table.py'.
+    local exe_path = script_dir .. "/plot_fityk_table.exe"
+    local py_path = script_dir .. "/plot_fityk_table.py"
+
+    local function exists(path)
+        local f = io.open(path, "r")
+        if f then f:close(); return true end
+        return false
+    end
+
+    local cmd
+    if exists(exe_path) then
+        cmd = string.format('cmd /C start "" /D "%s" "%s" "%s"', workdir, exe_path, report_file)
+    elseif exists(py_path) then
+        -- Use system python on PATH
+        cmd = string.format('cmd /C start "" /D "%s" python "%s" "%s"', workdir, py_path, report_file)
+    else
+        error("No plotter found next to script: looked for 'plot_fityk_table.exe' and 'plot_fityk_table.py' in " .. tostring(script_dir))
+    end
+
+    BatchProcessor.log("INFO", "Launching plotter (non-blocking): " .. cmd)
+    -- Non-blocking launch; Windows 'start' returns immediately.
+    os.execute(cmd)
+end
+
 -- Main Run Function
 function BatchProcessor.run()
     BatchProcessor.loadExternalConfig()
@@ -452,26 +537,50 @@ function BatchProcessor.run()
     end
 
     if UserConfig.mode == "full_process" then
+        BatchProcessor.ensureReportOutputFile()
         BatchProcessor.setLimits()
         BatchProcessor.batchFit()
         BatchProcessor.replot()
         BatchProcessor.generateReport()
+        if UserConfig.auto_plot then
+            local ok, err = pcall(function()
+                BatchProcessor.launchPlotter(UserConfig.report_output_file)
+            end)
+            if not ok then
+                BatchProcessor.log("WARN", "Auto-plot failed: " .. tostring(err))
+            end
+        end
 
     elseif UserConfig.mode == "full_process_and_save" then
-        if UserConfig.report_output_file == "" then 
-            UserConfig.report_output_file = "parameters_report.txt" 
-        end
+        BatchProcessor.ensureReportOutputFile()
         BatchProcessor.setLimits()
         BatchProcessor.batchFit()
         BatchProcessor.replot()
         BatchProcessor.generateReport()
         BatchProcessor.saveAllData()
+        if UserConfig.auto_plot then
+            local ok, err = pcall(function()
+                BatchProcessor.launchPlotter(UserConfig.report_output_file)
+            end)
+            if not ok then
+                BatchProcessor.log("WARN", "Auto-plot failed: " .. tostring(err))
+            end
+        end
 
     elseif UserConfig.mode == "save_table" then
-        if UserConfig.report_output_file == "" then 
-            UserConfig.report_output_file = "parameters_report.txt" 
-        end
-        BatchProcessor.generateReport()
+        BatchProcessor.ensureReportOutputFile()
+            BatchProcessor.generateReport()
+            if UserConfig.auto_plot then
+                -- Try to launch the external plotter in a non-blocking way.
+                -- The helper will look for a local EXE first, then a python script
+                -- placed alongside this Lua script.
+                local ok, err = pcall(function()
+                    BatchProcessor.launchPlotter(UserConfig.report_output_file)
+                end)
+                if not ok then
+                    BatchProcessor.log("WARN", "Auto-plot failed: " .. tostring(err))
+                end
+            end
 
     elseif UserConfig.mode == "fit_only" then
         BatchProcessor.setLimits()
