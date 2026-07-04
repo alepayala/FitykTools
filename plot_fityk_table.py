@@ -20,6 +20,7 @@ import os
 import re
 import subprocess
 import sys
+import math
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -145,7 +146,10 @@ def to_float(value: str) -> Optional[float]:
     if not text or text.lower() in {"nan", "none", "null", "na", "-"}:
         return None
     try:
-        return float(text)
+        val = float(text)
+        if math.isnan(val) or math.isinf(val):
+            return None
+        return val
     except ValueError:
         return None
 
@@ -157,7 +161,10 @@ def coerce_x_value(raw_value: object) -> object:
     if not text or text.lower() in {"nan", "none", "null", "na", "-"}:
         return None
     try:
-        return float(text)
+        val = float(text)
+        if math.isnan(val) or math.isinf(val):
+            return None
+        return val
     except ValueError:
         return text
 
@@ -296,13 +303,24 @@ def plot_matrix(x_values: Sequence[object], series_values: Dict[Tuple[str, int],
                     x_plot.append(float(x_value))
                 y_plot.append(float(y_value))
                 if e_value is not None:
-                    err_plot.append(float(e_value))
+                    err_plot.append(abs(float(e_value)))
                 else:
                     err_plot.append(0.0)
 
             if x_plot:
                 if any(err != 0.0 for err in err_plot):
                     ax.errorbar(x_plot, y_plot, yerr=err_plot, fmt="o-", capsize=3, elinewidth=1.0)
+                    # When error bars are larger than the spread of the values
+                    # themselves, matplotlib's autoscale stretches the axes to
+                    # fit the bar tips, squashing the actual variation. Rescale
+                    # to the data's own min/max instead, with a small margin so
+                    # points don't sit right on the plot box edge.
+                    y_min, y_max = min(y_plot), max(y_plot)
+                    data_range = y_max - y_min
+                    max_err = max(err_plot)
+                    if max_err > data_range:
+                        margin = data_range * 0.1 if data_range > 0 else (abs(y_max) * 0.05 or 0.05)
+                        ax.set_ylim(y_min - margin, y_max + margin)
                 else:
                     ax.plot(x_plot, y_plot, "o-")
             else:

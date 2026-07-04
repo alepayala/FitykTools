@@ -19,6 +19,8 @@ See the script in action: **[FitykTools.mp4](FitykTools.mp4)** (Download to view
 *   **Robust & Flexible**: 
     *   Automatically handles missing parameters (e.g., fitting a dataset with no peaks doesn't crash the script).
     *   Supports different function types (Gaussian, Lorentzian, Sigmoid, etc.) with automatic handling of varying parameter names.
+*   **Smart Header Auto-Detection**: Leave `headerStr` empty and the script inspects every fitted function (via Fityk's `get_info`) to build the report columns for you, **independently for each peak position**. If peak #1 is a Voigt in some datasets and a Lorentzian in others, both parameter sets accumulate correctly for that column, and any dataset missing a given parameter simply gets a `-` in that exact cell — columns never shift or misalign.
+*   **Configurable Column Layout**: Choose whether the report groups columns by peak (`center1, height1, ..., center2, height2, ...`) or by parameter type (`center1, center2, ..., height1, height2, ...`) via `sortByType`.
 *   **External Configuration**: Keep your code clean! Use a separate `fityk_config.lua` file in your data folder to control settings without modifying the main script.
 *   **Advanced Reporting**: Generates Tab-Separated or CSV reports with parameter values and errors.
 *   **User-Defined Functions**: Easily define and use custom fitting functions (e.g., `PVL`, `PearsonIV`) directly in your configuration file or the main script, expanding Fityk's built-in capabilities.
@@ -78,6 +80,9 @@ Included in the repository is a Python plotting tool, `plot_fityk_table.py`, whi
 python plot_fityk_table.py results.txt
 ```
 *It automatically detects the delimiter, extracts the x-axis, and generates `results_matrix.png`.*
+
+*   Set `auto_plot = true` in your config to launch it automatically right after the report is saved. It runs in its own console window, which now closes itself as soon as the plot is generated.
+*   Each subplot automatically rescales its y-axis to the data's own min/max (with a small margin) whenever the error bars are larger than the spread of the values themselves — so a few noisy points don't stretch the axis and hide the real trend.
 
 ## License
 MIT License. See [LICENSE](LICENSE) for details.

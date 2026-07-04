@@ -20,6 +20,9 @@ return {
     -- Report output file. "" prints to screen; "filename.txt" saves to file AND prints to screen.
     report_output_file = "parameters_report.txt", 
     
+    -- If true, appends the fitting range to the report output filename (e.g., "[min,max]")
+    append_range_to_report_name = true,
+
     -- Output format: "TAB" (default, good for reading) or "CSV" (good for Excel/Pandas).
     output_delimiter = "TAB", 
 
@@ -29,8 +32,8 @@ return {
     
     -- Data range for processing (X-axis limits).
     -- If 'lowerL > upperL' (e.g. 1, 0), the limit is DISABLED and all data is used.
-    lowerL = 280,
-    upperL = 380,
+    lowerL = 1,
+    upperL = 0,
     
     -- Spectrum range for fitting (Dataset indices).
     n_i = 0,      -- First spectrum index to fit.
@@ -42,14 +45,22 @@ return {
 
     -- Sort peaks by the first parameter (typically 'center'). Set to `false` to disable sorting.
     sortByFirstParam = true,
-
     
     -- List of background function names to exclude from parameter reports.
-    backgroundFuncNames = {"Linear", "Quadratic"},
+    backgroundFuncNames = {"Linear", "Quadratic","Cubic"},
     
-    -- List of parameter names to extract from each peak. 
-    -- 'center' MUST be first for robust sorting.
-    headerStr = {"center", "height", "hwhm"},--, "width", "shape", "shape_m", "skewness", "q", "rel_int", "delta_x", "hwhm_L"}, 
+    -- List of parameter names to extract from each peak, applied identically
+    -- to every peak column. Left empty here on purpose: parameters are
+    -- auto-detected independently PER PEAK POSITION (via get_info on each
+    -- function actually found there, across all datasets), so peaks that use
+    -- different function types (Voigt, PseudoVoigt, Lorentzian, ...) at the
+    -- same position just accumulate their own parameter sets automatically.
+    --
+    -- Uncomment one of these to force the same fixed parameter list for
+    -- every peak column instead (legacy behavior):
+    -- headerStr = {"center", "height", "gwidth", "shape"},   -- Voigt
+    -- headerStr = {"center", "height", "hwhm", "shape"},     -- PseudoVoigt
+    -- headerStr = {"center", "height", "hwhm"},              -- Lorentzian
 
     -- List of error names for the report. 
     -- Set to `true` (or "auto") to automatically generate error headers (e.g. "eCenter").
@@ -58,8 +69,8 @@ return {
     errorStr = true,
     
     -- Optional regex to extract part of a filename for the column "File". "" uses the full name.
-    -- Example: "Br5_(%d+)K" extracts '014' from 'Br5_014K-S.txt'.
-    fileinfo_mask = "NHSnCl_(%d+)K", 
+    -- Example: "filename_(%d+)" extracts '010' from 'filename_010-suffix.txt'.
+    fileinfo_mask = "",
 
     -- List of custom fitting functions to define in Fityk.
     -- Each string in the list should be a valid Fityk command.

@@ -2,8 +2,8 @@
 Fityk Batch Processing Script
 
 Author:      Alejandro Pedro Ayala, Federal University of Ceará
-Version:     3.0
-Last Updated: 2026-02-11
+Version:     3.1
+Last Updated: 2026-07-04
 
 Description:
 This script provides a comprehensive framework for batch processing spectral data in Fityk.
@@ -39,6 +39,9 @@ local UserConfig = {
     -- Report output file. "" prints to screen; "filename.txt" saves to file AND prints to screen.
     report_output_file = "", 
 
+    -- If true, appends the fitting range to the report output filename (e.g., "[min,max]")
+    append_range_to_report_name = false,
+
     -- Output format: "TAB" (default, good for reading) or "CSV" (good for Excel/Pandas).
     output_delimiter = "TAB", 
 
@@ -66,9 +69,13 @@ local UserConfig = {
     -- List of background function names to exclude from parameter reports.
     backgroundFuncNames = {"Linear", "Quadratic"},
 
-    -- List of parameter names to extract from each peak. 
-    -- 'center' MUST be first for robust sorting.
-    headerStr = {"center", "height", "hwhm"}, 
+    -- List of parameter names to extract from each peak, applied identically
+    -- to every peak column (e.g. {"center", "height", "hwhm"}).
+    -- Set to {} or nil to auto-detect instead: parameters are then discovered
+    -- independently PER PEAK POSITION (via get_info on each function actually
+    -- found there, across all datasets), so peak 1 and peak 2 can end up with
+    -- different parameter sets if they use different function types.
+    headerStr = {},
 
     -- List of error names for the report. 
     -- Set to `true` (or "auto") to automatically generate error headers (e.g. "eCenter").
@@ -77,8 +84,8 @@ local UserConfig = {
     errorStr = true,
 
     -- Optional regex to extract part of a filename for the column "File". "" uses the full name.
-    -- Example: "Br5_(%d+)K" extracts '014' from 'Br5_014K-S.txt'.
-    fileinfo_mask = "Br5_(%d+)K", 
+    -- Example: "filename_(%d+)" extracts '010' from 'filename_010-suffix.txt'.
+    fileinfo_mask = "",
 
     -- List of custom fitting functions to define in Fityk.
     -- Each string in the list should be a valid Fityk command.
@@ -97,13 +104,48 @@ function BatchProcessor.log(level, message)
     print(string.format("[%s] %s", level, message))
 end
 
+-- Helper: Cache of function-template name -> ordered list of its own parameter
+-- names, discovered via F:get_info(template). Looking parameters up by name
+-- (instead of a fixed shared index) is what lets different function types
+-- coexist at the same peak column without misaligning other columns.
+BatchProcessor._templateParamCache = {}
+function BatchProcessor.getTemplateParamNames(template)
+    local cached = BatchProcessor._templateParamCache[template]
+    if cached then return cached end
+
+    local names = {}
+    local status, val = pcall(function() return F:get_info(template) end)
+    if status and val then
+        -- [DEBUG] Show get_info output for control
+        BatchProcessor.log("INFO", "get_info(" .. template .. ") -> " .. tostring(val))
+
+        -- Extract parameters from signature (e.g. "Voigt(height, center, gwidth=...)")
+        local paramsStr = val:match(template .. "%((.-)%)")
+        if paramsStr then
+            for p in paramsStr:gmatch("[^,]+") do
+                local pname = p:match("^%s*([%w_]+)")
+                if pname then table.insert(names, pname) end
+            end
+        end
+    end
+    BatchProcessor._templateParamCache[template] = names
+    return names
+end
+
 -- Helper: Validation
 function BatchProcessor.validateConfig()
-    if not UserConfig.headerStr or #UserConfig.headerStr == 0 then
-        error("Config Error: 'headerStr' cannot be empty.")
-    end
-    if type(UserConfig.errorStr) == "table" and #UserConfig.errorStr ~= #UserConfig.headerStr then
-        error("Config Error: 'errorStr' length as a list must match 'headerStr'. Use `true` for auto-naming.")
+    if type(UserConfig.errorStr) == "table" then
+        if UserConfig.headerStr and #UserConfig.headerStr > 0 then
+            if #UserConfig.errorStr ~= #UserConfig.headerStr then
+                error("Config Error: 'errorStr' length as a list must match 'headerStr'. Use `true` for auto-naming.")
+            end
+        else
+            -- A fixed error-name list has no clear meaning once headers are
+            -- auto-detected independently per peak position (different
+            -- positions can end up with different parameter sets/lengths).
+            BatchProcessor.log("WARN", "'errorStr' as a list requires a manual 'headerStr'; falling back to auto-naming (e.g. 'eCenter') since headers are auto-detected per peak position.")
+            UserConfig.errorStr = true
+        end
     end
 end
 
@@ -111,6 +153,33 @@ end
 function BatchProcessor.ensureReportOutputFile()
     if not UserConfig.report_output_file or UserConfig.report_output_file == "" then
         UserConfig.report_output_file = "parameters_report.txt"
+    end
+end
+
+-- Helper: Format Report File Name with Range
+function BatchProcessor.formatReportFileName()
+    if UserConfig.append_range_to_report_name and UserConfig.report_output_file and UserConfig.report_output_file ~= "" then
+        local lo, up
+        if UserConfig.lowerL > UserConfig.upperL then
+            if F:get_dataset_count() > 0 then
+                lo = F:calculate_expr("min(x)", 0)
+                up = F:calculate_expr("max(x)", 0)
+            else
+                lo = 0
+                up = 0
+            end
+        else
+            lo = UserConfig.lowerL
+            up = UserConfig.upperL
+        end
+        
+        local filename = UserConfig.report_output_file
+        local name, ext = filename:match("^(.*)(%..-)$")
+        if not name then
+            name = filename
+            ext = ""
+        end
+        UserConfig.report_output_file = string.format("%s_[%g,%g]%s", name, lo, up, ext)
     end
 end
 
@@ -251,15 +320,32 @@ function BatchProcessor.saveAllData()
 end
 
 -- Core: Generate Parameter Report
+--
+-- This must run after fitting: it inspects whatever functions are currently
+-- attached to each dataset (F:get_components), so it only sees the final,
+-- fitted model - not a placeholder from before batchFit() propagated it.
 function BatchProcessor.generateReport()
-    local all_datasets_params = {}
-    local max_peaks = 0
     local dataset_count = F:get_dataset_count()
 
-    -- 1. Extraction
+    -- Helper to format numbers, using '-' for missing/not-applicable values
+    local function fmt(v)
+        if v then
+            return string.format("%.4f", v)
+        else
+            return "-"
+        end
+    end
+
+    -- 1. Extraction: read each function's OWN declared parameters (by name,
+    --    via get_info) into a name -> value map. Peaks are self-describing,
+    --    so two different function types can occupy the same column
+    --    position (across datasets) without disturbing other positions.
+    local all_datasets_peaks = {}
+    local max_peaks = 0
+
     for n = 0, dataset_count - 1 do
-        local components = F:get_components(n)
-        local current_dataset_params = {}
+        local components = F:get_components(n) or {}
+        local peaks = {}
 
         for i = 0, #components - 1 do
             local func = components[i]
@@ -272,94 +358,138 @@ function BatchProcessor.generateReport()
             end
 
             if not is_background then
-                local peak_params = {}
-                -- Extract generic params
-                for _, param_name in ipairs(UserConfig.headerStr) do
-                    -- Try to get value using pcall to avoid crash if param doesn't exist
-                    local status, val = pcall(function() return func:get_param_value(param_name) end)
-                    
+                local template = func:get_template_name()
+                local paramNames = BatchProcessor.getTemplateParamNames(template)
+                local values, errors = {}, {}
+
+                for _, pname in ipairs(paramNames) do
+                    local status, val = pcall(function() return func:get_param_value(pname) end)
                     if status and val then
-                        table.insert(peak_params, val)
+                        values[pname] = val
                         if UserConfig.errorStr then
                             local err_status, err_val = pcall(function()
-                                local var_full_name = func:var_name(param_name)
-                                return F:calculate_expr('$' .. var_full_name .. '.error')
+                                return F:calculate_expr('$' .. func:var_name(pname) .. '.error')
                             end)
-                            if err_status then
-                                table.insert(peak_params, err_val)
-                            else
-                                table.insert(peak_params, nil) -- Error calculation failed
-                            end
-                        end
-                    else
-                        table.insert(peak_params, nil) -- Param not found
-                        if UserConfig.errorStr then
-                            table.insert(peak_params, nil) -- Error placeholder
+                            if err_status then errors[pname] = err_val end
                         end
                     end
                 end
-                table.insert(current_dataset_params, peak_params)
+
+                -- Sort key: prefer 'center'; fall back to this function's own first param.
+                local sortKey = values["center"]
+                if sortKey == nil and paramNames[1] then sortKey = values[paramNames[1]] end
+
+                table.insert(peaks, {values = values, errors = errors, paramOrder = paramNames, sortKey = sortKey or 0})
             end
         end
 
-        -- 2. Sorting (by first parameter, typically 'center')
+        -- 2. Sorting (by 'center', typically) so column position k means
+        --    "k-th peak left to right" consistently across datasets.
         if UserConfig.sortByFirstParam then
-            table.sort(current_dataset_params, function(a, b)
-                return a[1] < b[1]
-            end)
+            table.sort(peaks, function(a, b) return a.sortKey < b.sortKey end)
         end
 
-        all_datasets_params[n] = current_dataset_params
-        if #current_dataset_params > max_peaks then
-            max_peaks = #current_dataset_params
+        all_datasets_peaks[n] = peaks
+        if #peaks > max_peaks then
+            max_peaks = #peaks
         end
     end
 
-    -- 3. Formatting
-    local delim = BatchProcessor.getDelimiter()
-    local report_lines = {}
+    if max_peaks == 0 then
+        error("Config Error: no (non-background) functions were found in any dataset. Define 'headerStr' manually or add functions/fit before generating the report.")
+    end
 
-    -- Header
-    local header_parts = {"File"}
-    local function addHeaderCols(peak_idx)
-        for j, param_name in ipairs(UserConfig.headerStr) do
-            table.insert(header_parts, param_name .. peak_idx)
-            if UserConfig.errorStr then
-                local err_name
-                if type(UserConfig.errorStr) == "table" and UserConfig.errorStr[j] then
-                    err_name = UserConfig.errorStr[j]
-                else
-                    -- Auto-generate error name (e.g. "center" -> "eCenter")
-                    err_name = "e" .. param_name:gsub("^%l", string.upper)
+    -- 3. Header resolution per peak position.
+    --    - Manual 'headerStr' (non-empty): applied identically to every position (legacy behavior).
+    --    - Otherwise: auto-detected independently per position, starting from
+    --      whichever function is found there first (in its own declared param
+    --      order) and growing if a later dataset places a different function
+    --      type (with previously-unseen params) at that same position.
+    local manualHeaders = UserConfig.headerStr and #UserConfig.headerStr > 0
+    local positionHeaders = {}
+
+    if manualHeaders then
+        for k = 1, max_peaks do
+            positionHeaders[k] = UserConfig.headerStr
+        end
+    else
+        BatchProcessor.log("INFO", "headerStr is empty. Auto-detecting parameters per peak position...")
+        for k = 1, max_peaks do
+            local seen, ordered = {}, {}
+            for n = 0, dataset_count - 1 do
+                local peak = all_datasets_peaks[n][k]
+                if peak then
+                    for _, pname in ipairs(peak.paramOrder) do
+                        if not seen[pname] then
+                            seen[pname] = true
+                            table.insert(ordered, pname)
+                        end
+                    end
                 end
-                table.insert(header_parts, err_name .. peak_idx)
+            end
+            positionHeaders[k] = ordered
+            BatchProcessor.log("INFO", string.format("Peak position %d parameters: %s", k, table.concat(ordered, ", ")))
+        end
+    end
+
+    -- 4. Column order: natural (peak-grouped: c1,h1,...,c2,h2,...) by default,
+    --    or grouped by parameter type (c1,c2,...,h1,h2,...) when sortByType
+    --    is enabled. Built as (position, name) pairs so both the header and
+    --    every row can be driven off the exact same list.
+    local columnOrder = {}
+    if UserConfig.sortByType then
+        local typeSeen, typeOrder = {}, {}
+        for k = 1, max_peaks do
+            for _, name in ipairs(positionHeaders[k]) do
+                if not typeSeen[name] then
+                    typeSeen[name] = true
+                    table.insert(typeOrder, name)
+                end
             end
         end
-    end
-
-    if UserConfig.sortByType then
-        for j, param_name in ipairs(UserConfig.headerStr) do
+        for _, name in ipairs(typeOrder) do
             for k = 1, max_peaks do
-                table.insert(header_parts, param_name .. k)
-                if UserConfig.errorStr then
-                     local err_name
-                    if type(UserConfig.errorStr) == "table" and UserConfig.errorStr[j] then
-                        err_name = UserConfig.errorStr[j]
-                    else
-                        err_name = "e" .. param_name:gsub("^%l", string.upper)
+                for _, hname in ipairs(positionHeaders[k]) do
+                    if hname == name then
+                        table.insert(columnOrder, {k = k, name = name})
+                        break
                     end
-                    table.insert(header_parts, err_name .. k)
                 end
             end
         end
     else
         for k = 1, max_peaks do
-            addHeaderCols(k)
+            for _, name in ipairs(positionHeaders[k]) do
+                table.insert(columnOrder, {k = k, name = name})
+            end
         end
     end
+
+    -- 5. Header row
+    local delim = BatchProcessor.getDelimiter()
+    local header_parts = {"File"}
+    for _, col in ipairs(columnOrder) do
+        table.insert(header_parts, col.name .. col.k)
+        if UserConfig.errorStr then
+            local err_name
+            if manualHeaders and type(UserConfig.errorStr) == "table" then
+                for j, hn in ipairs(UserConfig.headerStr) do
+                    if hn == col.name then err_name = UserConfig.errorStr[j] break end
+                end
+            end
+            err_name = err_name or ("e" .. col.name:gsub("^%l", string.upper))
+            table.insert(header_parts, err_name .. col.k)
+        end
+    end
+
+    local report_lines = {}
     table.insert(report_lines, table.concat(header_parts, delim))
 
-    -- Rows
+    -- 6. Rows: look up each value/error by name, using '-' whenever the peak
+    --    at that position doesn't exist in this dataset, or its function
+    --    doesn't define that parameter. Every column is emitted individually
+    --    (never via a bulk/omitted insert), so a missing value can never
+    --    shift subsequent columns - it just fills its own cell with '-'.
     for n = 0, dataset_count - 1 do
         local row_parts = {}
         local fileN = string.match(F:get_info("filename", n), "[^/\\]+$") or ""
@@ -367,58 +497,22 @@ function BatchProcessor.generateReport()
             fileN = string.match(fileN, UserConfig.fileinfo_mask) or fileN
         end
         table.insert(row_parts, fileN)
-        
-        local params = all_datasets_params[n]
 
-        -- Logic to fill row with empty cells if peaks are missing
-        if UserConfig.sortByType then
-            for j = 1, #UserConfig.headerStr do
-                for k = 1, max_peaks do
-                    local val_index = j
-                    if UserConfig.errorStr then val_index = 2 * (j - 1) + 1 end
-                    
-                    if params[k] then
-                        local val = params[k][val_index]
-                        if val then
-                            table.insert(row_parts, string.format("%.4f", val))
-                        else
-                            table.insert(row_parts, "-")
-                        end
-                        if UserConfig.errorStr then
-                            local err = params[k][val_index + 1]
-                            if err then
-                                table.insert(row_parts, string.format("%.4f", err))
-                            else
-                                table.insert(row_parts, "-")
-                            end
-                        end
-                    else
-                        table.insert(row_parts, "-")
-                        if UserConfig.errorStr then table.insert(row_parts, "-") end
-                    end
-                end
-            end
-        else
-            for k = 1, max_peaks do
-                if params[k] then
-                    for _, val in ipairs(params[k]) do
-                        if val then
-                            table.insert(row_parts, string.format("%.4f", val))
-                        else
-                            table.insert(row_parts, "-")
-                        end
-                    end
-                else
-                    local col_count = #UserConfig.headerStr
-                    if UserConfig.errorStr then col_count = col_count * 2 end
-                    for _ = 1, col_count do table.insert(row_parts, "-") end
-                end
+        local peaks = all_datasets_peaks[n]
+        for _, col in ipairs(columnOrder) do
+            local peak = peaks[col.k]
+            local val = peak and peak.values[col.name]
+            table.insert(row_parts, fmt(val))
+            if UserConfig.errorStr then
+                local err_val = peak and peak.errors[col.name]
+                table.insert(row_parts, fmt(err_val))
             end
         end
+
         table.insert(report_lines, table.concat(row_parts, delim))
     end
 
-    -- 4. Output
+    -- 7. Output
     print("\n--- Parameter Report ---")
     for _, line in ipairs(report_lines) do
         print(line)
@@ -494,10 +588,10 @@ function BatchProcessor.launchPlotter(report_file)
 
     local cmd
     if exists(exe_path) then
-        cmd = string.format('cmd /C start "" /D "%s" "%s" "%s"', workdir, exe_path, report_file)
+        cmd = string.format('start "" /D "%s" cmd /C ""%s" "%s""', workdir, exe_path, report_file)
     elseif exists(py_path) then
         -- Use system python on PATH
-        cmd = string.format('cmd /C start "" /D "%s" python "%s" "%s"', workdir, py_path, report_file)
+        cmd = string.format('start "" /D "%s" cmd /C "python "%s" "%s""', workdir, py_path, report_file)
     else
         error("No plotter found next to script: looked for 'plot_fityk_table.exe' and 'plot_fityk_table.py' in " .. tostring(script_dir))
     end
@@ -538,6 +632,7 @@ function BatchProcessor.run()
 
     if UserConfig.mode == "full_process" then
         BatchProcessor.ensureReportOutputFile()
+        BatchProcessor.formatReportFileName()
         BatchProcessor.setLimits()
         BatchProcessor.batchFit()
         BatchProcessor.replot()
@@ -553,6 +648,7 @@ function BatchProcessor.run()
 
     elseif UserConfig.mode == "full_process_and_save" then
         BatchProcessor.ensureReportOutputFile()
+        BatchProcessor.formatReportFileName()
         BatchProcessor.setLimits()
         BatchProcessor.batchFit()
         BatchProcessor.replot()
@@ -569,18 +665,19 @@ function BatchProcessor.run()
 
     elseif UserConfig.mode == "save_table" then
         BatchProcessor.ensureReportOutputFile()
-            BatchProcessor.generateReport()
-            if UserConfig.auto_plot then
-                -- Try to launch the external plotter in a non-blocking way.
-                -- The helper will look for a local EXE first, then a python script
-                -- placed alongside this Lua script.
-                local ok, err = pcall(function()
-                    BatchProcessor.launchPlotter(UserConfig.report_output_file)
-                end)
-                if not ok then
-                    BatchProcessor.log("WARN", "Auto-plot failed: " .. tostring(err))
-                end
+        BatchProcessor.formatReportFileName()
+        BatchProcessor.generateReport()
+        if UserConfig.auto_plot then
+            -- Try to launch the external plotter in a non-blocking way.
+            -- The helper will look for a local EXE first, then a python script
+            -- placed alongside this Lua script.
+            local ok, err = pcall(function()
+                BatchProcessor.launchPlotter(UserConfig.report_output_file)
+            end)
+            if not ok then
+                BatchProcessor.log("WARN", "Auto-plot failed: " .. tostring(err))
             end
+        end
 
     elseif UserConfig.mode == "fit_only" then
         BatchProcessor.setLimits()
@@ -588,6 +685,7 @@ function BatchProcessor.run()
         BatchProcessor.replot()
 
     elseif UserConfig.mode == "report_only" then
+        BatchProcessor.formatReportFileName()
         BatchProcessor.generateReport()
 
     elseif UserConfig.mode == "normalize_and_replot" then

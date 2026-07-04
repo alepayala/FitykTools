@@ -2,6 +2,7 @@
 *.xy
 *.asv
 *.fit
+*.zip
 parameters_report.txt
 results.csv
 *.log
