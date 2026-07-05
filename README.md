@@ -62,11 +62,10 @@ exec 'C:\path\to\FitykTools.lua'
 **Report File (`results.txt` or `.csv`)**:
 Contains a row for each dataset with columns for Chi-Square, DOF, and all defined parameters (Center, Height, FWHM, Area, etc.).
 
-**XY Data Files**:
-Saved as `Filename.xy`.
-Format:
+**XY Data Files** (`mode = "full_process_and_save"`):
+Saved as `Filename.xy`, with one column for the original data, one for the total fit, and one more for every individual fit component (`F(x)` is the sum of all `F_i(x)`):
 ```text
-x	y	F(x)	%Gaussian1(x)	%Lorentzian2(x) ...
+x	y	F(x)	F_1(x)	F_2(x) ...
 10.0	25.1	24.9	12.0	12.9
 ...
 ```

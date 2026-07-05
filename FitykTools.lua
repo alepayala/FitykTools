@@ -300,22 +300,35 @@ function BatchProcessor.replot()
     end)
 end
 
--- Core: Save All Data
+-- Core: Save All Data (spectrum, total fit, and each individual fit
+-- component as its own column: x, y, F(x), F_1(x), F_2(x), ... where
+-- F(x) = sum of all F_i(x)).
 function BatchProcessor.saveAllData()
     BatchProcessor.forEachDataset(function(n)
         local title = F:get_info("title", n)
         -- Sanitize title for filename
         local filename = title:gsub("[^%w%-_]", "_") .. ".xy"
-        
+
+        local components = F:get_components(n) or {}
+        local header_cols = {"x", "y", "F(x)"}
+        local expr_cols = {"x", "y", "F(x)"}
+        for i = 0, #components - 1 do
+            local func = components[i]
+            table.insert(header_cols, string.format("F_%d(x)", i + 1))
+            -- func.name is Fityk's own identifier for this function instance
+            -- (e.g. "_3"), which must be referenced with a '%' prefix.
+            table.insert(expr_cols, "%" .. func.name .. "(x)")
+        end
+
         -- Write header
         local f_header = io.open(filename, "w")
         if f_header then
-            f_header:write("x\ty\tF(x)\n")
+            f_header:write(table.concat(header_cols, "\t") .. "\n")
             f_header:close()
         end
 
         -- Append data (using >> to append to the file we just created)
-        F:execute(string.format("@%d: print all: x, y, F(x) >> '%s'", n, filename))
+        F:execute(string.format("@%d: print all: %s >> '%s'", n, table.concat(expr_cols, ", "), filename))
     end)
 end
 
