@@ -96,11 +96,16 @@ def resolve_output_path(input_path: Path, requested_output: Optional[str], confi
             output_path = (input_path.parent / output_path).resolve()
         return output_path.with_suffix(".png") if output_path.suffix.lower() not in {".png", ".jpg", ".jpeg", ".svg", ".pdf"} else output_path
 
+    # Use the configured report name only when it refers to the very file being
+    # plotted. Otherwise (e.g. a report with the fitting range appended to its
+    # name), derive the image name from the input file itself, so reports of
+    # different ranges don't all overwrite the same PNG.
     if config.get("report_output_file"):
         output_path = Path(config["report_output_file"]).expanduser()
-        if not output_path.is_absolute():
-            output_path = (input_path.parent / output_path).resolve()
-        return output_path.with_suffix(".png") if output_path.suffix.lower() not in {".png", ".jpg", ".jpeg", ".svg", ".pdf"} else output_path
+        if output_path.name == input_path.name:
+            if not output_path.is_absolute():
+                output_path = (input_path.parent / output_path).resolve()
+            return output_path.with_suffix(".png") if output_path.suffix.lower() not in {".png", ".jpg", ".jpeg", ".svg", ".pdf"} else output_path
 
     return input_path.with_name(f"{input_path.stem}_matrix.png")
 

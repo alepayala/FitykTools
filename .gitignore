@@ -17,3 +17,6 @@ Thumbs.db
 
 # External libraries
 extras/
+
+# FitykTools update-check timestamp
+.fityktools_update_check
