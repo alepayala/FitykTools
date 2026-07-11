@@ -2,7 +2,7 @@
 Fityk Batch Processing Script
 
 Author:      Alejandro Pedro Ayala, Federal University of Ceará
-Version:     3.9
+Version:     3.10
 Last Updated: 2026-07-11
 
 Description:
@@ -22,7 +22,7 @@ Instructions:
 ]]
 
 -- Keep in sync with the 'Version:' line in the header above.
-local SCRIPT_VERSION = "3.9"
+local SCRIPT_VERSION = "3.10"
 local UPDATE_URL = "https://raw.githubusercontent.com/alepayala/FitykTools/main/FitykTools.lua"
 
 ------------------------------------------------------------
@@ -1114,10 +1114,21 @@ function BatchProcessor.checkForUpdates()
             sf:close()
         end
 
-        local p = io.popen('curl -s --max-time 3 "' .. UPDATE_URL .. '"')
-        if not p then return end
-        local body = p:read("*a") or ""
-        p:close()
+        local function fetch(cmd)
+            local p = io.popen(cmd)
+            if not p then return "" end
+            local out = p:read("*a") or ""
+            p:close()
+            return out
+        end
+
+        local body = fetch('curl -s --max-time 3 "' .. UPDATE_URL .. '"')
+        if not body:match("Version:%s*[%d%.]") and package.config:sub(1, 1) == "\\" then
+            -- curl does not use the system proxy settings, so it can fail on
+            -- networks with proxies or TLS inspection. The PowerShell web
+            -- client honors them; try it as a fallback on Windows.
+            body = fetch('powershell -NoProfile -NonInteractive -Command "try { [Net.ServicePointManager]::SecurityProtocol = \'Tls12\'; Invoke-RestMethod -Uri \'' .. UPDATE_URL .. '\' -TimeoutSec 5 } catch {}"')
+        end
 
         -- The 'Version:' line of the remote script's header comes first.
         local remote = body:match("Version:%s*([%d%.]+)")

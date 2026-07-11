@@ -85,7 +85,7 @@ All keys, grouped as in `fityk_config.lua`. Defaults shown in parentheses.
 * `custom_functions` (`{}`) — extra function types defined before fitting; each entry is a Fityk `define` command. Note: `x` is implicit and must **not** appear in the parameter list.
 
 ### 7. Updates
-* `check_for_updates` (`true`) — at most once a day, the script checks GitHub for a newer FitykTools version and prints a notice. It is a read-only request (via `curl`, bundled with Windows 10/11); nothing is downloaded or installed automatically, and it is completely silent when offline or when `curl` is unavailable. Set to `false` to disable. The check runs at the end of the workflow, so it never delays fitting; the once-a-day throttle is kept in a small `.fityktools_update_check` file next to the script.
+* `check_for_updates` (`true`) — at most once a day, the script checks GitHub for a newer FitykTools version and prints a notice. It is a read-only request (via `curl`, falling back to the PowerShell web client on Windows networks with proxies/TLS inspection where `curl` fails); nothing is downloaded or installed automatically, and it is completely silent when offline. Set to `false` to disable. The check runs at the end of the workflow, so it never delays fitting; the once-a-day throttle is kept in a small `.fityktools_update_check` file next to the script.
 
 ### Config compatibility
 
