@@ -27,6 +27,13 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 PARAM_RE = re.compile(r"^(?P<error>e)?(?P<name>[A-Za-z_][A-Za-z0-9_]*?)(?P<peak>\d+)$")
 
+# Fit-quality columns produced by FitykTools (report_fit_quality = true).
+# They end in a digit, so without special handling PARAM_RE would misread
+# them as peak parameters ("rChi" of peak 2, "R" of peak 2). They get their
+# own leftmost column in the plot instead. DoF is recognized but not plotted.
+QUALITY_COLUMNS = ("rchi2", "r2")
+NON_SERIES_COLUMNS = {"dof"}
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Plot a Fityk parameter table as a matrix")
@@ -203,10 +210,17 @@ def find_x_column(header: Sequence[str], requested: Optional[str], data_rows: Se
     return header[0] if header else "row_index", [coerce_x_value(row[0]) if row else None for row in data_rows]
 
 
-def build_series_map(header: Sequence[str], data_rows: Sequence[Sequence[str]], ignore_errors: bool) -> Tuple[List[str], List[int], Dict[Tuple[str, int], Dict[str, Optional[int]]]]:
+def build_series_map(header: Sequence[str], data_rows: Sequence[Sequence[str]], ignore_errors: bool) -> Tuple[List[str], List[int], Dict[Tuple[str, int], Dict[str, Optional[int]]], Dict[str, int]]:
     series_map: Dict[Tuple[str, int], Dict[str, Optional[int]]] = {}
+    quality_cols: Dict[str, int] = {}
 
     for col_idx, name in enumerate(header):
+        clean = name.strip()
+        if clean.lower() in QUALITY_COLUMNS:
+            quality_cols[clean] = col_idx
+            continue
+        if clean.lower() in NON_SERIES_COLUMNS:
+            continue
         match = PARAM_RE.match(name)
         if not match:
             continue
@@ -228,7 +242,7 @@ def build_series_map(header: Sequence[str], data_rows: Sequence[Sequence[str]], 
     valid_keys = sorted(series_map.keys(), key=lambda item: (item[0], item[1]))
     param_names = sorted({param for param, _ in valid_keys})
     peaks = sorted({peak for _, peak in valid_keys})
-    return param_names, peaks, {key: series_map[key] for key in valid_keys}
+    return param_names, peaks, {key: series_map[key] for key in valid_keys}, quality_cols
 
 
 def collect_series_values(series_map: Dict[Tuple[str, int], Dict[str, Optional[int]]], data_rows: Sequence[Sequence[str]]) -> Dict[Tuple[str, int], Dict[str, List[Optional[float]]]]:
@@ -249,11 +263,17 @@ def collect_series_values(series_map: Dict[Tuple[str, int], Dict[str, Optional[i
     return result
 
 
-def plot_matrix(x_values: Sequence[object], series_values: Dict[Tuple[str, int], Dict[str, List[Optional[float]]]], param_names: Sequence[str], peaks: Sequence[int], output_path: Optional[Path], dpi: int) -> None:
+def plot_matrix(x_values: Sequence[object], series_values: Dict[Tuple[str, int], Dict[str, List[Optional[float]]]], param_names: Sequence[str], peaks: Sequence[int], output_path: Optional[Path], dpi: int, quality_values: Optional[Dict[str, List[Optional[float]]]] = None) -> None:
     import matplotlib.pyplot as plt
 
-    n_rows = len(param_names)
-    n_cols = len(peaks)
+    # Fit-quality series (rChi2, R2) occupy a dedicated leftmost column,
+    # stacked on the first rows; peak columns start right after it and keep
+    # the usual layout (one row per parameter name, one column per peak).
+    quality_names = list(quality_values.keys()) if quality_values else []
+    extra_col = 1 if quality_names else 0
+
+    n_rows = max(len(param_names), len(quality_names), 1)
+    n_cols = len(peaks) + extra_col
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(3.2 * n_cols, 2.4 * n_rows), squeeze=False)
     fig.suptitle("Fityk parameter matrix")
 
@@ -282,64 +302,79 @@ def plot_matrix(x_values: Sequence[object], series_values: Dict[Tuple[str, int],
         else:
             category_labels = None
 
+    def plot_cell(ax, values: Sequence[Optional[float]], errors: Sequence[Optional[float]], title: str) -> None:
+        x_plot: List[float] = []
+        y_plot: List[float] = []
+        err_plot: List[float] = []
+
+        for x_value, y_value, e_value in zip(x_values, values, errors):
+            if x_value is None or y_value is None:
+                continue
+            if category_labels is not None:
+                x_coord = category_map.get(str(x_value))
+                if x_coord is None:
+                    continue
+                x_plot.append(float(x_coord))
+            else:
+                x_plot.append(float(x_value))
+            y_plot.append(float(y_value))
+            if e_value is not None:
+                err_plot.append(abs(float(e_value)))
+            else:
+                err_plot.append(0.0)
+
+        if x_plot:
+            if any(err != 0.0 for err in err_plot):
+                ax.errorbar(x_plot, y_plot, yerr=err_plot, fmt="o-", capsize=3, elinewidth=1.0)
+                # When error bars are larger than the spread of the values
+                # themselves, matplotlib's autoscale stretches the axes to
+                # fit the bar tips, squashing the actual variation. Rescale
+                # to the data's own min/max instead, with a small margin so
+                # points don't sit right on the plot box edge.
+                y_min, y_max = min(y_plot), max(y_plot)
+                data_range = y_max - y_min
+                max_err = max(err_plot)
+                if max_err > data_range:
+                    margin = data_range * 0.1 if data_range > 0 else (abs(y_max) * 0.05 or 0.05)
+                    ax.set_ylim(y_min - margin, y_max + margin)
+            else:
+                ax.plot(x_plot, y_plot, "o-")
+        else:
+            ax.text(0.5, 0.5, "no data", ha="center", va="center", transform=ax.transAxes)
+
+        ax.set_title(title)
+        ax.grid(True, alpha=0.25)
+        if category_labels is not None:
+            ax.set_xticks(list(range(len(category_labels))))
+            ax.set_xticklabels(category_labels, rotation=45, ha="right")
+
+    # Leftmost column: fit-quality series stacked on the first rows.
+    if extra_col:
+        for row_idx in range(n_rows):
+            ax = axes[row_idx][0]
+            if row_idx < len(quality_names):
+                qname = quality_names[row_idx]
+                qvalues = quality_values[qname]
+                plot_cell(ax, qvalues, [None] * len(qvalues), qname)
+            else:
+                ax.axis("off")
+
+    # Peak columns: one row per parameter name, one column per peak, exactly
+    # as before; a peak lacking a given parameter leaves its cell empty.
     for row_idx, param_name in enumerate(param_names):
         for col_idx, peak_id in enumerate(peaks):
-            ax = axes[row_idx][col_idx]
+            ax = axes[row_idx][col_idx + extra_col]
             key = (param_name, peak_id)
             if key not in series_values:
                 ax.axis("off")
                 continue
+            plot_cell(ax, series_values[key]["value"], series_values[key]["error"], f"{param_name} {peak_id}")
 
-            values = series_values[key]["value"]
-            errors = series_values[key]["error"]
-            x_plot: List[float] = []
-            y_plot: List[float] = []
-            err_plot: List[float] = []
-
-            for x_value, y_value, e_value in zip(x_values, values, errors):
-                if x_value is None or y_value is None:
-                    continue
-                if category_labels is not None:
-                    x_coord = category_map.get(str(x_value))
-                    if x_coord is None:
-                        continue
-                    x_plot.append(float(x_coord))
-                else:
-                    x_plot.append(float(x_value))
-                y_plot.append(float(y_value))
-                if e_value is not None:
-                    err_plot.append(abs(float(e_value)))
-                else:
-                    err_plot.append(0.0)
-
-            if x_plot:
-                if any(err != 0.0 for err in err_plot):
-                    ax.errorbar(x_plot, y_plot, yerr=err_plot, fmt="o-", capsize=3, elinewidth=1.0)
-                    # When error bars are larger than the spread of the values
-                    # themselves, matplotlib's autoscale stretches the axes to
-                    # fit the bar tips, squashing the actual variation. Rescale
-                    # to the data's own min/max instead, with a small margin so
-                    # points don't sit right on the plot box edge.
-                    y_min, y_max = min(y_plot), max(y_plot)
-                    data_range = y_max - y_min
-                    max_err = max(err_plot)
-                    if max_err > data_range:
-                        margin = data_range * 0.1 if data_range > 0 else (abs(y_max) * 0.05 or 0.05)
-                        ax.set_ylim(y_min - margin, y_max + margin)
-                else:
-                    ax.plot(x_plot, y_plot, "o-")
-            else:
-                ax.text(0.5, 0.5, "no data", ha="center", va="center", transform=ax.transAxes)
-
-            ax.set_title(f"{param_name} {peak_id}")
-            ax.grid(True, alpha=0.25)
-            if category_labels is not None:
-                ax.set_xticks(list(range(len(category_labels))))
-                ax.set_xticklabels(category_labels, rotation=45, ha="right")
-            if row_idx < n_rows - 1:
-                ax.set_xlabel("")
-            if col_idx > 0:
-                ax.set_ylabel("")
+    # Rows below the last parameter (possible when there are fewer
+    # parameters than quality series) stay empty in the peak columns.
+    for row_idx in range(len(param_names), n_rows):
+        for col_idx in range(len(peaks)):
+            axes[row_idx][col_idx + extra_col].axis("off")
 
     fig.tight_layout(rect=[0, 0, 1, 0.98])
     if output_path:
@@ -371,13 +406,21 @@ def main() -> None:
     if x_name is None:
         raise ValueError("Could not determine an x-axis column")
 
-    param_names, peaks, series_map = build_series_map(header, data_rows, args.no_errors)
+    param_names, peaks, series_map, quality_cols = build_series_map(header, data_rows, args.no_errors)
     if not series_map:
         raise ValueError("No parameter columns matching the Fityk naming pattern were found")
 
     series_values = collect_series_values(series_map, data_rows)
+
+    # Quality series in canonical order: rChi2 first, then R2.
+    quality_values: Dict[str, List[Optional[float]]] = {}
+    for canon in QUALITY_COLUMNS:
+        for hname, idx in quality_cols.items():
+            if hname.lower() == canon:
+                quality_values[hname] = [to_float(row[idx]) if idx < len(row) else None for row in data_rows]
+
     output_path = resolve_output_path(input_path, args.output, config)
-    plot_matrix(x_values, series_values, param_names, peaks, output_path, args.dpi)
+    plot_matrix(x_values, series_values, param_names, peaks, output_path, args.dpi, quality_values)
     if not args.no_open:
         open_output(output_path)
 

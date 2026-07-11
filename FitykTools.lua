@@ -2,7 +2,7 @@
 Fityk Batch Processing Script
 
 Author:      Alejandro Pedro Ayala, Federal University of Ceará
-Version:     3.8
+Version:     3.9
 Last Updated: 2026-07-11
 
 Description:
@@ -22,7 +22,7 @@ Instructions:
 ]]
 
 -- Keep in sync with the 'Version:' line in the header above.
-local SCRIPT_VERSION = "3.8"
+local SCRIPT_VERSION = "3.9"
 local UPDATE_URL = "https://raw.githubusercontent.com/alepayala/FitykTools/main/FitykTools.lua"
 
 ------------------------------------------------------------
@@ -860,7 +860,11 @@ function BatchProcessor.generateReport()
     end
 
     if max_peaks == 0 then
-        error("Config Error: no (non-background) functions were found in any dataset. Define 'parameter_names' manually or add functions/fit before generating the report.")
+        -- Legitimate situation, e.g. fitting only the background in
+        -- preparation for a baseline subtraction - warn and skip the report
+        -- instead of aborting the whole run.
+        BatchProcessor.log("WARN", "No non-background functions found in any dataset (only types listed in 'background_function_names'?). Parameter report skipped.")
+        return false
     end
 
     -- 3. Header resolution per peak position.
@@ -1015,6 +1019,8 @@ function BatchProcessor.generateReport()
             BatchProcessor.log("ERROR", "Could not open report file: " .. tostring(err))
         end
     end
+
+    return true
 end
 
 
@@ -1194,33 +1200,40 @@ function BatchProcessor.run()
     end
     BatchProcessor.applyRangeToOutputNames()
 
+    -- Apply the fitting window and exclusions in EVERY mode, so the active
+    -- points of the spectra always reflect the configuration (not only when
+    -- fitting).
+    BatchProcessor.setLimits()
+
     if UserConfig.mode == "full_process" then
-        BatchProcessor.setLimits()
         BatchProcessor.batchFit()
         BatchProcessor.replot()
-        BatchProcessor.generateReport()
-        BatchProcessor.maybeAutoPlot()
+        if BatchProcessor.generateReport() then
+            BatchProcessor.maybeAutoPlot()
+        end
 
     elseif UserConfig.mode == "full_process_and_save" then
-        BatchProcessor.setLimits()
         BatchProcessor.batchFit()
         BatchProcessor.replot()
-        BatchProcessor.generateReport()
+        local report_ok = BatchProcessor.generateReport()
         BatchProcessor.saveAllData()
-        BatchProcessor.maybeAutoPlot()
+        if report_ok then
+            BatchProcessor.maybeAutoPlot()
+        end
 
     elseif UserConfig.mode == "save_table" then
-        BatchProcessor.generateReport()
-        BatchProcessor.maybeAutoPlot()
+        if BatchProcessor.generateReport() then
+            BatchProcessor.maybeAutoPlot()
+        end
 
     elseif UserConfig.mode == "fit_only" then
-        BatchProcessor.setLimits()
         BatchProcessor.batchFit()
         BatchProcessor.replot()
 
     elseif UserConfig.mode == "report_only" then
-        BatchProcessor.generateReport()
-        BatchProcessor.maybeAutoPlot()
+        if BatchProcessor.generateReport() then
+            BatchProcessor.maybeAutoPlot()
+        end
 
     elseif UserConfig.mode == "normalize" then
         BatchProcessor.normalize()
